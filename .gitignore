@@ -1,6 +1,9 @@
 *.pyc
+.venv/
 .vscode
 output
+data/
+downloads/
 build
 diff_rasterization/diff_rast.egg-info
 diff_rasterization/dist
