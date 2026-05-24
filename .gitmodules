@@ -11,3 +11,6 @@
 [submodule "submodules/fused-ssim"]
 	path = submodules/fused-ssim
 	url = https://github.com/rahul-goel/fused-ssim.git
+[submodule "submodules/mast3r-slam"]
+	path = submodules/mast3r-slam
+	url = https://github.com/rmurai0610/MASt3R-SLAM.git
