@@ -15,8 +15,9 @@ from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotati
 from torch import nn
 import os
 import json
+import gc
 from utils.system_utils import mkdir_p
-from plyfile import PlyData, PlyElement
+from plyfile import PlyData
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
@@ -236,24 +237,59 @@ class GaussianModel:
             l.append('rot_{}'.format(i))
         return l
 
-    def save_ply(self, path):
+    def _write_ply_header(self, file, vertex_count, attributes):
+        file.write(b"ply\n")
+        file.write(b"format binary_little_endian 1.0\n")
+        file.write(f"element vertex {vertex_count}\n".encode("ascii"))
+        for attribute in attributes:
+            file.write(f"property float {attribute}\n".encode("ascii"))
+        file.write(b"end_header\n")
+
+    def save_ply(self, path, chunk_size=65536):
         mkdir_p(os.path.dirname(path))
 
-        xyz = self._xyz.detach().cpu().numpy()
-        normals = np.zeros_like(xyz)
-        f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities = self._opacity.detach().cpu().numpy()
-        scale = self._scaling.detach().cpu().numpy()
-        rotation = self._rotation.detach().cpu().numpy()
+        attributes = self.construct_list_of_attributes()
+        dtype_full = np.dtype([(attribute, '<f4') for attribute in attributes])
+        point_count = self._xyz.shape[0]
+        chunk_size = max(1, int(chunk_size))
 
-        dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
+        with open(path, "wb") as ply_file:
+            self._write_ply_header(ply_file, point_count, attributes)
 
-        elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
-        elements[:] = list(map(tuple, attributes))
-        el = PlyElement.describe(elements, 'vertex')
-        PlyData([el]).write(path)
+            for start in range(0, point_count, chunk_size):
+                end = min(start + chunk_size, point_count)
+                chunk = np.empty(end - start, dtype=dtype_full)
+
+                xyz = self._xyz[start:end].detach().cpu().numpy()
+                chunk["x"] = xyz[:, 0]
+                chunk["y"] = xyz[:, 1]
+                chunk["z"] = xyz[:, 2]
+                chunk["nx"] = 0.0
+                chunk["ny"] = 0.0
+                chunk["nz"] = 0.0
+
+                f_dc = self._features_dc[start:end].detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+                for idx in range(f_dc.shape[1]):
+                    chunk[f"f_dc_{idx}"] = f_dc[:, idx]
+
+                f_rest = self._features_rest[start:end].detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+                for idx in range(f_rest.shape[1]):
+                    chunk[f"f_rest_{idx}"] = f_rest[:, idx]
+
+                opacities = self._opacity[start:end].detach().cpu().numpy()
+                chunk["opacity"] = opacities[:, 0]
+
+                scale = self._scaling[start:end].detach().cpu().numpy()
+                for idx in range(scale.shape[1]):
+                    chunk[f"scale_{idx}"] = scale[:, idx]
+
+                rotation = self._rotation[start:end].detach().cpu().numpy()
+                for idx in range(rotation.shape[1]):
+                    chunk[f"rot_{idx}"] = rotation[:, idx]
+
+                chunk.tofile(ply_file)
+
+        gc.collect()
 
     def reset_opacity(self):
         opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
