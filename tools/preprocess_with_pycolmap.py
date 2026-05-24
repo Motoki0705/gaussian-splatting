@@ -50,6 +50,8 @@ def main() -> None:
     parser.add_argument("--dataset-dir", required=True, type=Path)
     parser.add_argument("--camera-model", default="SIMPLE_RADIAL")
     parser.add_argument("--max-image-size", default=1600, type=int)
+    parser.add_argument("--matcher", choices=("exhaustive", "sequential"), default="exhaustive")
+    parser.add_argument("--sequential-overlap", default=10, type=int)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
@@ -93,8 +95,17 @@ def main() -> None:
         extraction_options=extraction_options,
     )
 
-    print("Matching features")
-    pycolmap.match_exhaustive(database_path, matching_options=matching_options)
+    print(f"Matching features with {args.matcher} matcher")
+    if args.matcher == "sequential":
+        pairing_options = pycolmap.SequentialPairingOptions()
+        pairing_options.overlap = args.sequential_overlap
+        pycolmap.match_sequential(
+            database_path,
+            matching_options=matching_options,
+            pairing_options=pairing_options,
+        )
+    else:
+        pycolmap.match_exhaustive(database_path, matching_options=matching_options)
 
     print("Running incremental mapping")
     reconstructions = pycolmap.incremental_mapping(

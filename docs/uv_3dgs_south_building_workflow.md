@@ -124,11 +124,23 @@ zip には sparse reconstruction も含まれていますが、今回の検証�
 
 ## 6. pycolmap で画像から前処理する
 
+### 動画から学習する場合
+
+動画を入力にする場合は、先に ffmpeg でフレーム画像へ変換してから、このセクションの `--source-images` に抽出先ディレクトリを指定します。
+
+```bash
+.venv/bin/python tools/extract_video_frames.py \
+  --video data/meiji-court-large/VID_20260524_182756335.mp4 \
+  --output-dir data/meiji-court-large/video-frames \
+  --fps 5 \
+  --overwrite
+```
+
 `tools/preprocess_with_pycolmap.py` を追加して、以下をまとめて実行できるようにしました。
 
 - 元画像を `input/` にコピー
 - SIFT feature extraction
-- exhaustive matching
+- exhaustive または sequential matching
 - incremental mapping
 - image undistortion
 - 3DGS が読む `images/` と `sparse/0/` の生成
@@ -140,6 +152,7 @@ zip には sparse reconstruction も含まれていますが、今回の検証�
   --source-images data/south-building-source/south-building/images \
   --dataset-dir data/south-building \
   --max-image-size 1600 \
+  --matcher sequential \
   --overwrite
 ```
 
