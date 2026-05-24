@@ -22,6 +22,7 @@ from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
+from utils.ground_alignment import GroundAlignmentConfig, estimate_ground_alignment, transform_camera_rt, transform_points
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -44,6 +45,7 @@ class SceneInfo(NamedTuple):
     nerf_normalization: dict
     ply_path: str
     is_nerf_synthetic: bool
+    ground_alignment: dict
 
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
@@ -142,7 +144,41 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
+def _ground_alignment_config_from_args(args):
+    return GroundAlignmentConfig(
+        voxel_size=getattr(args, "ground_voxel_size", 0.05),
+        sor_k=getattr(args, "ground_sor_k", 16),
+        sor_std_ratio=getattr(args, "ground_sor_std_ratio", 2.0),
+        ransac_iters=getattr(args, "ground_ransac_iters", 1000),
+        ransac_threshold=getattr(args, "ground_ransac_threshold", 0.03),
+        low_percentile=getattr(args, "ground_low_percentile", 35.0),
+        min_inlier_ratio=getattr(args, "ground_min_inlier_ratio", 0.05),
+        up_axis=getattr(args, "ground_up_axis", "z"),
+        max_ransac_points=getattr(args, "ground_max_ransac_points", 50000),
+    )
+
+def _transform_camera_infos(cam_infos, world_to_ground):
+    transformed = []
+    for cam in cam_infos:
+        R, T = transform_camera_rt(cam.R, cam.T, world_to_ground)
+        transformed.append(cam._replace(R=R, T=T))
+    return transformed
+
+def _load_ground_alignment_metadata(args):
+    explicit_path = getattr(args, "ground_transform_path", "")
+    candidate_paths = [explicit_path] if explicit_path else []
+    model_path = getattr(args, "model_path", "")
+    if model_path:
+        candidate_paths.append(os.path.join(model_path, "ground_transform.json"))
+
+    for candidate_path in candidate_paths:
+        if candidate_path and os.path.exists(candidate_path):
+            with open(candidate_path, "r") as file:
+                metadata = json.load(file)
+            return metadata
+    return None
+
+def readColmapSceneInfo(path, images, depths, eval, train_test_exp, args=None, llffhold=8):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -217,12 +253,39 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
     except:
         pcd = None
 
+    ground_alignment = None
+    if getattr(args, "align_ground", False):
+        if pcd is None:
+            raise RuntimeError("Ground alignment requires a readable COLMAP point cloud.")
+        ground_alignment = _load_ground_alignment_metadata(args)
+        if ground_alignment is not None:
+            print("Loading existing ground alignment transform.")
+            world_to_ground = np.array(ground_alignment["world_to_ground"], dtype=np.float64)
+        else:
+            config = _ground_alignment_config_from_args(args)
+            print("Estimating ground alignment from sparse point cloud.")
+            result = estimate_ground_alignment(pcd.points, config)
+            world_to_ground = result.transform
+            ground_alignment = result.to_json_dict()
+            print(
+                "Ground alignment: "
+                f"{result.inlier_count}/{result.sample_count} inliers, "
+                f"rms={result.rms_error:.6f}"
+            )
+        transformed_points = transform_points(pcd.points, world_to_ground)
+        transformed_normals = pcd.normals @ world_to_ground[:3, :3].T
+        pcd = BasicPointCloud(points=transformed_points, colors=pcd.colors, normals=transformed_normals)
+        train_cam_infos = _transform_camera_infos(train_cam_infos, world_to_ground)
+        test_cam_infos = _transform_camera_infos(test_cam_infos, world_to_ground)
+        nerf_normalization = getNerfppNorm(train_cam_infos)
+
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
                            test_cameras=test_cam_infos,
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path,
-                           is_nerf_synthetic=False)
+                           is_nerf_synthetic=False,
+                           ground_alignment=ground_alignment)
     return scene_info
 
 def readCamerasFromTransforms(path, transformsfile, depths_folder, white_background, is_test, extension=".png"):
@@ -306,7 +369,8 @@ def readNerfSyntheticInfo(path, white_background, depths, eval, extension=".png"
                            test_cameras=test_cam_infos,
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path,
-                           is_nerf_synthetic=True)
+                           is_nerf_synthetic=True,
+                           ground_alignment=None)
     return scene_info
 
 sceneLoadTypeCallbacks = {

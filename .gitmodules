@@ -11,3 +11,6 @@
 [submodule "submodules/fused-ssim"]
 	path = submodules/fused-ssim
 	url = https://github.com/rahul-goel/fused-ssim.git
+[submodule "submodules/tennis-lab"]
+	path = submodules/tennis-lab
+	url = https://github.com/Motoki0705/tennis-lab.git

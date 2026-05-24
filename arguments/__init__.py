@@ -56,6 +56,17 @@ class ModelParams(ParamGroup):
         self.train_test_exp = False
         self.data_device = "cuda"
         self.eval = False
+        self.align_ground = False
+        self.ground_voxel_size = 0.05
+        self.ground_sor_k = 16
+        self.ground_sor_std_ratio = 2.0
+        self.ground_ransac_iters = 1000
+        self.ground_ransac_threshold = 0.03
+        self.ground_low_percentile = 35.0
+        self.ground_min_inlier_ratio = 0.05
+        self.ground_up_axis = "z"
+        self.ground_max_ransac_points = 50000
+        self.ground_transform_path = ""
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
